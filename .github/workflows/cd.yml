@@ -17,7 +17,7 @@ jobs:
       !startsWith(github.event.head_commit.message, 'chore') &&
       !startsWith(github.event.head_commit.message, 'build: hotfix') &&
       !endsWith(github.event.head_commit.message, 'reformatted by jina-dev-bot')
-    runs-on: ubuntu-20.04
+    runs-on: LATLmacV0L0LVDT
     steps:
       - uses: actions/checkout@v2
         with:
