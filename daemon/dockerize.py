@@ -1,6 +1,5 @@
-
 from jina.helper import colored
-from typing import Dict, List, Tuple, TYPE_CHECKING
+from typing import Dict, List, Tuple, TYPE_CHECKING, Optional
 
 import docker
 from fastapi import HTTPException
@@ -17,7 +16,7 @@ from .excepts import (
     DockerNotFoundException,
     DockerBuildException,
     DockerNetworkException,
-    DockerRunException
+    DockerRunException,
 )
 
 __flow_ready__ = 'Flow is ready to use'
@@ -35,7 +34,9 @@ class Dockerizer:
     logger = JinaLogger('Dockerizer', **vars(jinad_args))
     try:
         client: 'DockerClient' = docker.from_env()
-        raw_client: 'APIClient' = docker.APIClient(base_url='unix://var/run/docker.sock')
+        raw_client: 'APIClient' = docker.APIClient(
+            base_url='unix://var/run/docker.sock'
+        )
     except docker.errors.DockerException:
         logger.critical(
             f'docker client cannot connect to dockerd. '
@@ -94,10 +95,12 @@ class Dockerizer:
             )
             try:
                 network: 'Network' = cls.client.networks.create(
-                    name=workspace_id, driver='bridge',  # ipam=ipam_config
+                    name=workspace_id,
+                    driver='bridge',  # ipam=ipam_config
                 )
             except docker.errors.APIError as e:
                 import traceback
+
                 traceback.print_exc()
                 cls.logger.critical(f'API Error {e!r} during docker network creation')
                 raise DockerNetworkException()
@@ -144,18 +147,33 @@ class Dockerizer:
         return id_cleaner(image.id)
 
     @classmethod
+    def run_custom(
+        cls, workspace_id: DaemonID, daemon_file: 'DaemonFile'
+    ) -> Tuple['Container', str, Dict]:
+        return cls.run(
+            workspace_id=workspace_id,
+            container_id=workspace_id,
+            command=None,
+            entrypoint=daemon_file.run,
+            ports={f'{port}/tcp': port for port in daemon_file.ports},
+        )
+
+    @classmethod
     def run(
         cls,
         workspace_id: DaemonID,
         container_id: DaemonID,
         command: str,
         ports: Dict,
+        entrypoint: Optional[str] = None,
     ) -> Tuple['Container', str, Dict]:
         from .stores import workspace_store
 
         metadata = workspace_store[workspace_id].metadata
         if not metadata:
-            raise DockerBuildException('Docker image not built properly, cannot proceed for run')
+            raise DockerBuildException(
+                'Docker image not built properly, cannot proceed for run'
+            )
         image = cls.client.images.get(name=metadata.image_id)
         network = metadata.network
         cls.logger.info(
@@ -172,15 +190,19 @@ class Dockerizer:
                 ports=ports,
                 detach=True,
                 command=command,
+                entrypoint=entrypoint,
                 extra_hosts={'host.docker.internal': 'host-gateway'},
             )
         except docker.errors.NotFound as e:
             cls.logger.critical(
                 f'Image {image} or Network {network} not found locally {e!r}'
             )
-            raise DockerBuildException('Docker image not built properly, cannot proceed for run')
+            raise DockerBuildException(
+                'Docker image not built properly, cannot proceed for run'
+            )
         except docker.errors.APIError as e:
             import traceback
+
             traceback.print_exc()
             cls.logger.critical(f'API Error {e!r} during docker network creation')
             raise DockerRunException()
@@ -199,10 +221,7 @@ class Dockerizer:
 
     @classmethod
     def environment(cls) -> Dict[str, str]:
-        return {
-            'JINA_LOG_WORKSPACE': '/workspace/logs',
-            'JINA_RANDOM_PORTS': 'True'
-        }
+        return {'JINA_LOG_WORKSPACE': '/workspace/logs', 'JINA_RANDOM_PORTS': 'True'}
 
     def remove(cls, id: DaemonID):
         if id.jtype == IDLiterals.JNETWORK:
